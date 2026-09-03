@@ -1,7 +1,7 @@
 import torch
 
 class ddpmScheduler:
-    def __init__(sellf, T = 1000, beta_start = 1e-4,beta_end = 0.2):
+    def __init__(self, T = 1000, beta_start = 1e-4,beta_end = 0.2):
 
         self.T = T
 
@@ -14,11 +14,18 @@ class ddpmScheduler:
         self.alpha_bar = torch.cumprod(self.alphas, dim = 0)
 
         #fwd coeff
-        self.sqrt_alpha_bar = torch.sqrt(alpha_bar)
+        self.sqrt_alpha_bar = torch.sqrt(self.alpha_bar)
 
         self.sqrt_one_minus_alpha_bar = torch.sqrt(1-self.alpha_bar)
 
         #rev coeff
-        self.sqrt_recip_alpha = torch.sqrt(1/self.aphas)
+        self.sqrt_recip_alpha = torch.sqrt(1/self.alphas)
 
-        
+        alpha_bar_prev = torch.cat(
+            [
+                torch.tensor([1.0]),
+                self.alpha_bar[:-1]
+            ]
+        )
+
+        self.posterior_vairance = (self.betas * (1-alpha_bar_prev)/(1-self.alpha_bar))
