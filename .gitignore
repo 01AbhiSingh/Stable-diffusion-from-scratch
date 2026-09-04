@@ -13,3 +13,18 @@ checkpoints/
 
 *.pth
 *.pt
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Datasets
+data/
+
+# Training outputs
+checkpoints/
+*.pt
+*.pth
+
+# Misc
+.ipynb_checkpoints/
