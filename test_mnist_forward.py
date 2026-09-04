@@ -1,13 +1,28 @@
 import torch
-import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+
+from diffusers import UNet2DModel
 
 from scheduler import ddpmScheduler
 from forward_pass import forward_scheduler
 
+from model import get_model
 
-transform = transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.5),(0.5,))])
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+print (device)
+
+transform = transforms.Compose([
+    transforms.Resize((32, 32)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        (0.5,),
+        (0.5,)
+    )
+])
 
 dataset = datasets.MNIST(
     root = "./data",
@@ -16,54 +31,76 @@ dataset = datasets.MNIST(
     transform=transform
 )
 
-x0, label = dataset[0]
+dataloader = DataLoader(dataset,batch_size = 16, shuffle=True)
 
-print("Label:", label)
-print("Single image shape:", x0.shape)
-# Add batch dimension
-#
-# Before:
-# [C,H,W]
-#
-# After:
-# [B,C,H,W]
-print("before",x0[0])
-x0 = x0.unsqueeze(0)
-print("after",x0[0])
+scheduler = ddpmScheduler(T = 1000, device = device)
 
+model = get_model().to(device)
 
-print("Batch image shape:", x0.shape)
+optmizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-scheduler = ddpmScheduler()
+model.train()
 
-timesteps = [0,250,500,750,999]
+for step, (x0,_) in enumerate(dataloader):
+    x0 = x0.to(device)
 
-
-plt.figure(figsize=(15, 3))
+    # --------------------------------
+    # Sample timestep independently
+    # for every image
+    #
+    # Shape:
+    # [B]
+    # --------------------------------
 
 
-# Original image
+    t = torch.randint(
+        low = 0,
+        high = scheduler.T,
+        size = (x0.shape[0],),
+        device =device
+    )
 
-plt.subplot(1, 6, 1)
+    # --------------------------------
+    # Forward diffusion
+    #
+    # x0 -> xt
+    # --------------------------------
 
-plt.imshow(
-    x0[0, 0].cpu(),
-    cmap="gray"
-)
+    xt, epsilon = forward_scheduler(
+        x0,
+        t,
+        scheduler
+    )
 
-plt.title("x0")
-plt.axis("off")
+    epsilon_pred = model(xt, t).sample
 
-for i , timestep in enumerate(timesteps):
-    t = torch.tensor([timestep], dtype=torch.long)
+    # --------------------------------
+    # DDPM loss
+    #
+    # || epsilon - epsilon_theta ||^2
+    # --------------------------------
 
-    xt, epsilon = forward_scheduler(x0, t, scheduler)
+    loss = F.mse_loss(
+        epsilon_pred,
+        epsilon
+    )
 
-    plt.subplot(1,6,i+2)
-    plt.imshow(xt[0,0].detach().cpu(),cmap = "gray")
-    plt.title(f"t={timestep}")
+    # --------------------------------
+    # Backpropagation
+    # --------------------------------
+    optmizer.zero_grad()
+    loss.backward()
+    optmizer.step()
 
-    plt.axis("off")
+    # --------------------------------
+    # Debug information
+    # --------------------------------
 
-plt.tight_layout()
-plt.show()
+    print(
+        f"Step: {step} | "
+        f"Loss: {loss.item():.6f}"
+    )
+
+    if step == 9:
+        break
+

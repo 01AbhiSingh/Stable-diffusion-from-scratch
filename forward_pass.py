@@ -1,6 +1,6 @@
 import torch
 
-def forward_scheduler(x0, t, scheduler):
+def forward_scheduler(x0, t, scheduler, epsilon=None):
     """
         Performs q(x_t | x_0)
 
@@ -30,7 +30,8 @@ def forward_scheduler(x0, t, scheduler):
     """
 
     #Sample Gaussian noise
-    epsilon = torch.randn_like(x0)
+    if epsilon is None:
+        epsilon = torch.randn_like(x0)
 
     # 2. Get alpha_bar coefficients
     # for selected timestep
