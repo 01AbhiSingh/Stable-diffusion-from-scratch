@@ -31,9 +31,7 @@ print(
 
 num_samples = 16
 
-checkpoint_path = (
-    "./checkpoints/"
-    "ddpm_mnist_epoch_15.pt"
+checkpoint_path =( "./checkpoints/ddpm_mnist_epoch_1.pt"
 )
 
 
