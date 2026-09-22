@@ -28,4 +28,4 @@ class ddpmScheduler:
             ]
         )
 
-        self.posterior_vairance = (self.betas * (1-alpha_bar_prev)/(1-self.alpha_bar))
+        self.posterior_variance = (self.betas * (1-alpha_bar_prev)/(1-self.alpha_bar))
