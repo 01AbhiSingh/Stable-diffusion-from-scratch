@@ -1,0 +1,57 @@
+# Phase 2: same DDPM mathematics and UNet architecture as Phase 1.
+# Paths are relative to Optimized_DDPM/, not your shell's current folder.
+seed: 42
+
+dataset:
+  name: MNIST
+  root: data
+  image_size: 32
+  channels: 1
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+
+diffusion:
+  timesteps: 1000
+  beta_schedule: linear
+  beta_start: 0.0001
+  beta_end: 0.02
+
+model:
+  block_out_channels: [64, 128, 256]
+  layers_per_block: 2
+  # Keep Phase 1 architecture: three ordinary down/up blocks, not attention blocks.
+  down_block_types: [DownBlock2D, DownBlock2D, DownBlock2D]
+  up_block_types: [UpBlock2D, UpBlock2D, UpBlock2D]
+
+training:
+  epochs: 15
+  learning_rate: 0.0001
+  weight_decay: 0.0
+  grad_accum_steps: 1
+  max_grad_norm: 1.0
+  log_every: 50
+
+optimization:
+  # Choose none to reproduce FP32 Phase 1 behavior; bf16 for modern CUDA GPUs;
+  # fp16 also supported, with dynamic GradScaler.
+  precision: bf16
+  ema:
+    enabled: true
+    decay: 0.999
+  compile:
+    enabled: false
+    mode: default
+  tf32: false
+
+checkpoint:
+  directory: checkpoints
+  save_every: 5
+
+sampling:
+  num_images: 16
+  batch_size: 16
+  output: generated_samples.png
+  use_ema: true
+  save_intermediates: true
+  intermediate_timesteps: [999, 750, 500, 250, 0]
