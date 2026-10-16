@@ -9,6 +9,21 @@ void ddpm_forward_cuda(
     const at::Tensor& sqrt_one_minus_alpha_bar,
     at::Tensor& output);
 
+// Implemented in ddpm_kernel.cu
+void ddpm_reverse_cuda(
+    const at::Tensor& x_t,
+    const at::Tensor& epsilon_pred,
+    const at::Tensor& noise,
+
+    const at::Tensor& betas,
+    const at::Tensor& sqrt_one_minus_alpha_bar,
+    const at::Tensor& sqrt_recip_alpha,
+    const at::Tensor& posterior_variance,
+
+    int64_t timestep,
+    at::Tensor& output
+);
+
 at::Tensor forward(
     const at::Tensor& x0,
     const at::Tensor& epsilon,
@@ -54,6 +69,196 @@ at::Tensor forward(
     return output;
 }
 
+// ============================================================
+// DDPM REVERSE DIFFUSION - C++ WRAPPER
+// ============================================================
+
+at::Tensor reverse(
+    const at::Tensor& x_t,
+    const at::Tensor& epsilon_pred,
+    const at::Tensor& noise,
+
+    const at::Tensor& betas,
+    const at::Tensor& sqrt_one_minus_alpha_bar,
+    const at::Tensor& sqrt_recip_alpha,
+    const at::Tensor& posterior_variance,
+
+    int64_t timestep
+) {
+    // --------------------------------------------------------
+    // 1. Validate input tensor
+    // --------------------------------------------------------
+
+    TORCH_CHECK(
+        x_t.is_cuda(),
+        "x_t must be a CUDA tensor"
+    );
+
+    TORCH_CHECK(
+        x_t.scalar_type() == at::kFloat,
+        "x_t must be float32"
+    );
+
+    TORCH_CHECK(
+        x_t.dim() == 4,
+        "x_t must have shape [B, C, H, W]"
+    );
+
+    TORCH_CHECK(
+        x_t.is_contiguous(),
+        "x_t must be contiguous"
+    );
+
+    TORCH_CHECK(
+        x_t.numel() > 0,
+        "x_t must not be empty"
+    );
+
+    // --------------------------------------------------------
+    // 2. Validate epsilon prediction and noise
+    // --------------------------------------------------------
+
+    auto check_image = [&](const at::Tensor& tensor,
+                           const char* name) {
+
+        TORCH_CHECK(
+            tensor.is_cuda(),
+            name, " must be CUDA"
+        );
+
+        TORCH_CHECK(
+            tensor.device() == x_t.device(),
+            name, " must be on the same GPU as x_t"
+        );
+
+        TORCH_CHECK(
+            tensor.scalar_type() == at::kFloat,
+            name, " must be float32"
+        );
+
+        TORCH_CHECK(
+            tensor.sizes() == x_t.sizes(),
+            name, " must have the same shape as x_t"
+        );
+
+        TORCH_CHECK(
+            tensor.is_contiguous(),
+            name, " must be contiguous"
+        );
+    };
+
+    check_image(epsilon_pred, "epsilon_pred");
+    check_image(noise, "noise");
+
+    // --------------------------------------------------------
+    // 3. Validate scheduler arrays
+    // --------------------------------------------------------
+
+    const int64_t T = betas.numel();
+
+    TORCH_CHECK(
+        T > 0,
+        "betas must not be empty"
+    );
+
+    auto check_schedule = [&](const at::Tensor& tensor,
+                              const char* name) {
+
+        TORCH_CHECK(
+            tensor.is_cuda(),
+            name, " must be CUDA"
+        );
+
+        TORCH_CHECK(
+            tensor.device() == x_t.device(),
+            name, " must be on the same GPU as x_t"
+        );
+
+        TORCH_CHECK(
+            tensor.scalar_type() == at::kFloat,
+            name, " must be float32"
+        );
+
+        TORCH_CHECK(
+            tensor.dim() == 1,
+            name, " must be 1-D"
+        );
+
+        TORCH_CHECK(
+            tensor.numel() == T,
+            name, " must have length T"
+        );
+
+        TORCH_CHECK(
+            tensor.is_contiguous(),
+            name, " must be contiguous"
+        );
+    };
+
+    check_schedule(betas, "betas");
+
+    check_schedule(
+        sqrt_one_minus_alpha_bar,
+        "sqrt_one_minus_alpha_bar"
+    );
+
+    check_schedule(
+        sqrt_recip_alpha,
+        "sqrt_recip_alpha"
+    );
+
+    check_schedule(
+        posterior_variance,
+        "posterior_variance"
+    );
+
+    // --------------------------------------------------------
+    // 4. Validate timestep
+    // --------------------------------------------------------
+
+    TORCH_CHECK(
+        timestep >= 0 && timestep < T,
+        "timestep must be between 0 and T-1"
+    );
+
+    // --------------------------------------------------------
+    // 5. Allocate output tensor
+    // --------------------------------------------------------
+
+    auto output = at::empty_like(x_t);
+
+    // --------------------------------------------------------
+    // 6. Execute CUDA kernel
+    // --------------------------------------------------------
+
+    ddpm_reverse_cuda(
+        x_t,
+        epsilon_pred,
+        noise,
+
+        betas,
+        sqrt_one_minus_alpha_bar,
+        sqrt_recip_alpha,
+        posterior_variance,
+
+        timestep,
+        output
+    );
+
+    return output;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("forward", &forward, "DDPM forward diffusion (CUDA, float32)");
+
+    m.def(
+        "forward",
+        &forward,
+        "DDPM forward diffusion (CUDA, float32)"
+    );
+
+    m.def(
+        "reverse",
+        &reverse,
+        "DDPM reverse diffusion (CUDA, float32)"
+    );
 }

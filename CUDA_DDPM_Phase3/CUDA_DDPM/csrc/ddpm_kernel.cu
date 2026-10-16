@@ -61,3 +61,161 @@ void ddpm_forward_cuda(
 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
+
+// ============================================================
+// DDPM REVERSE DIFFUSION KERNEL
+// ============================================================
+//
+// mean = (1 / sqrt(alpha_t)) *
+//        (x_t - (beta_t / sqrt(1-alpha_bar_t)) * eps_pred)
+//
+// t > 0:
+//     x_prev = mean + sqrt(posterior_variance_t) * noise
+//
+// t == 0:
+//     x_prev = mean
+//
+// One CUDA thread processes one tensor element.
+// All images in the batch share the same reverse timestep.
+// ============================================================
+
+__global__ void ddpm_reverse_kernel(
+    const float* __restrict__ x_t,
+    const float* __restrict__ epsilon_pred,
+    const float* __restrict__ noise,
+
+    const float* __restrict__ betas,
+    const float* __restrict__ sqrt_one_minus_alpha_bar,
+    const float* __restrict__ sqrt_recip_alpha,
+    const float* __restrict__ posterior_variance,
+
+    float* __restrict__ output,
+
+    int64_t timestep,
+    int64_t elements
+) {
+    // --------------------------------------------------------
+    // 1. Global thread index
+    // --------------------------------------------------------
+
+    const int64_t i =
+        static_cast<int64_t>(blockIdx.x) * blockDim.x
+        + threadIdx.x;
+
+    if (i >= elements)
+        return;
+
+    // --------------------------------------------------------
+    // 2. Get scheduler coefficients
+    // --------------------------------------------------------
+
+    const float beta = betas[timestep];
+
+    const float scale =
+        sqrt_one_minus_alpha_bar[timestep];
+
+    const float recip_alpha =
+        sqrt_recip_alpha[timestep];
+
+    // --------------------------------------------------------
+    // 3. Predict reverse mean
+    // --------------------------------------------------------
+
+    const float mean =
+        recip_alpha *
+        (
+            x_t[i] -
+            (beta / scale) * epsilon_pred[i]
+        );
+
+    // --------------------------------------------------------
+    // 4. Add posterior noise when timestep > 0
+    // --------------------------------------------------------
+
+    if (timestep > 0) {
+
+        const float sigma =
+            sqrtf(posterior_variance[timestep]);
+
+        output[i] = mean + sigma * noise[i];
+
+    } else {
+
+        // Final reverse step: no additional noise
+        output[i] = mean;
+    }
+}
+// ============================================================
+// REVERSE CUDA KERNEL LAUNCHER
+// ============================================================
+
+void ddpm_reverse_cuda(
+    const at::Tensor& x_t,
+    const at::Tensor& epsilon_pred,
+    const at::Tensor& noise,
+
+    const at::Tensor& betas,
+    const at::Tensor& sqrt_one_minus_alpha_bar,
+    const at::Tensor& sqrt_recip_alpha,
+    const at::Tensor& posterior_variance,
+
+    int64_t timestep,
+    at::Tensor& output
+) {
+    // Ensure execution uses the correct CUDA device
+    const c10::cuda::CUDAGuard device_guard(x_t.device());
+
+    // --------------------------------------------------------
+    // Total number of elements
+    // --------------------------------------------------------
+
+    const int64_t elements = x_t.numel();
+
+    // --------------------------------------------------------
+    // Configure CUDA execution
+    // --------------------------------------------------------
+
+    constexpr int threads = 256;
+
+    const int64_t block_count =
+        (elements + threads - 1) / threads;
+
+    TORCH_CHECK(
+        block_count <= 2147483647LL,
+        "Tensor too large for CUDA kernel launch"
+    );
+
+    const dim3 blocks(
+        static_cast<unsigned int>(block_count)
+    );
+
+    // --------------------------------------------------------
+    // Use PyTorch's current CUDA stream
+    // --------------------------------------------------------
+
+    const cudaStream_t stream =
+        c10::cuda::getCurrentCUDAStream().stream();
+
+    // --------------------------------------------------------
+    // Launch reverse diffusion kernel
+    // --------------------------------------------------------
+
+    ddpm_reverse_kernel<<<blocks, threads, 0, stream>>>(
+        x_t.data_ptr<float>(),
+        epsilon_pred.data_ptr<float>(),
+        noise.data_ptr<float>(),
+
+        betas.data_ptr<float>(),
+        sqrt_one_minus_alpha_bar.data_ptr<float>(),
+        sqrt_recip_alpha.data_ptr<float>(),
+        posterior_variance.data_ptr<float>(),
+
+        output.data_ptr<float>(),
+
+        timestep,
+        elements
+    );
+
+    // Check kernel launch errors
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
